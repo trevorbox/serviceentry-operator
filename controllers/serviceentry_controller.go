@@ -18,6 +18,11 @@ package controllers
 
 import (
 	"context"
+	"log"
+
+	"net"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -41,6 +46,10 @@ type ServiceEntryReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 }
+
+var (
+	ipRegex, _ = regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
+)
 
 func getInstance() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
@@ -85,6 +94,10 @@ func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	logger.Info("", "hosts", se.Spec.Hosts)
 
+	ips := lookupIps(se.Spec.Hosts)
+
+	logger.Info("", "ips", ips)
+
 	return reconcile.Result{
 		RequeueAfter: time.Second * 30,
 	}, nil
@@ -98,4 +111,26 @@ func (r *ServiceEntryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		//For(getInstance()).
 		For(&networking.ServiceEntry{}).
 		Complete(r)
+}
+
+func isIpv4Net(ip string) bool {
+	return ipRegex.MatchString(strings.Trim(ip, " "))
+}
+
+func lookupIps(hosts []string) []string {
+	var addresses []string
+	for _, host := range hosts {
+		addr, err := net.LookupIP(host)
+		if err != nil {
+			log.Printf("Unknown host %s", host)
+		} else {
+			for _, ip := range addr {
+				if isIpv4Net(ip.String()) {
+					addresses = append(addresses, ip.String()+"/32")
+				}
+			}
+
+		}
+	}
+	return addresses
 }
