@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"log"
 
 	"net"
 	"regexp"
@@ -49,6 +48,7 @@ type ServiceEntryReconciler struct {
 
 var (
 	ipRegex, _ = regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
+	logger     logr.Logger
 )
 
 func getInstance() *unstructured.Unstructured {
@@ -75,7 +75,7 @@ func getInstance() *unstructured.Unstructured {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.7.0/pkg/reconcile
 func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Log.WithValues("serviceentry", req.NamespacedName)
+	logger = r.Log.WithValues("serviceentry", req.NamespacedName)
 
 	se := &networking.ServiceEntry{}
 
@@ -122,7 +122,7 @@ func lookupIps(hosts []string) []string {
 	for _, host := range hosts {
 		addr, err := net.LookupIP(host)
 		if err != nil {
-			log.Printf("Unknown host %s", host)
+			logger.Error(err, "Unknown Host", "host", host)
 		} else {
 			for _, ip := range addr {
 				if isIpv4Net(ip.String()) {
