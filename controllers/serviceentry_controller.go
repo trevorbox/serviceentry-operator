@@ -92,11 +92,15 @@ func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return reconcile.Result{}, err
 	}
 
-	logger.Info("", "hosts", se.Spec.Hosts)
+	a := se.Spec.Addresses
 
-	ips := lookupIps(se.Spec.Hosts)
+	b := lookupIps(se.Spec.Hosts)
 
-	logger.Info("", "ips", ips)
+	if !Equal(a, b) {
+		se.Spec.Addresses = b
+		err = r.Update(context.TODO(), se)
+		logger.Info("This is the updated ServiceEntry Addresses", "se.Spec.Addresses", se.Spec.Addresses)
+	}
 
 	return reconcile.Result{
 		RequeueAfter: time.Second * 30,
@@ -120,17 +124,43 @@ func isIpv4Net(ip string) bool {
 func lookupIps(hosts []string) []string {
 	var addresses []string
 	for _, host := range hosts {
-		addr, err := net.LookupIP(host)
-		if err != nil {
-			logger.Error(err, "Unknown Host", "host", host)
-		} else {
-			for _, ip := range addr {
-				if isIpv4Net(ip.String()) {
-					addresses = append(addresses, ip.String()+"/32")
+		if !strings.HasPrefix(host, "*") {
+			addr, err := net.LookupIP(host)
+			if err != nil {
+				logger.Error(err, "Unknown Host", "host", host)
+			} else {
+				for _, ip := range addr {
+					addresses = append(addresses, ip.String())
 				}
-			}
 
+			}
 		}
 	}
 	return addresses
+}
+
+type void struct{}
+
+var member void
+
+func Equal(a, b []string) bool {
+
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]void)
+
+	for _, v := range a {
+		set[v] = member
+	}
+
+	for _, v := range b {
+		_, exists := set[v]
+		if !exists {
+			logger.Info("Changed IP!", "ip", v, "original", a, "new", b)
+			return false
+		}
+	}
+
+	return true
 }
