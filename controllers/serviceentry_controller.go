@@ -68,12 +68,9 @@ func getInstance() *unstructured.Unstructured {
 func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := r.Log.WithValues("serviceentry", req.NamespacedName)
 
-	// Using a unstructured object.
-	//u := getInstance()
-
 	se := &networking.ServiceEntry{}
 
-	err := r.Get(ctx, req.NamespacedName, se)
+	err := r.Get(context.TODO(), req.NamespacedName, se)
 
 	if err != nil {
 		if errs.IsNotFound(err) {
@@ -87,22 +84,6 @@ func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	logger.Info("", "hosts", se.Spec.Hosts)
-
-	//uc := u.UnstructuredContent()
-
-	//hosts := uc["spec"].(map[string]interface{})["hosts"]
-
-	//u.SetUnstructuredContent()
-
-	//logger.Info("UnstructuredContent", "hosts", hosts)
-	//logger.Info("UnstructuredContent", "apiVersion", u.GetAPIVersion())
-	//logger.Info("UnstructuredContent", "annotations", u.GetAnnotations())
-
-	m := make(map[string]string)
-	m["yes"] = "yes"
-	//u.SetAnnotations(m)
-
-	//err = r.Update(ctx, u)
 
 	return reconcile.Result{
 		RequeueAfter: time.Second * 30,
