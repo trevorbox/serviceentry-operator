@@ -33,6 +33,7 @@ import (
 
 	"github.com/trevorbox/serviceentry-operator/controllers"
 	// +kubebuilder:scaffold:imports
+	networking "istio.io/client-go/pkg/apis/networking/v1alpha3"
 )
 
 var (
@@ -42,7 +43,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
+	utilruntime.Must(networking.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
