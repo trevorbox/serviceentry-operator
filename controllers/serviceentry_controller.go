@@ -27,9 +27,7 @@ import (
 	"github.com/go-logr/logr"
 
 	errs "k8s.io/apimachinery/pkg/api/errors"
-	unstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -45,21 +43,20 @@ type ServiceEntryReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 }
+type void struct{}
+
+const updateAnnotation = "updateme"
 
 var (
 	ipRegex, _ = regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
 	logger     logr.Logger
-)
+	requeue    = reconcile.Result{
+		Requeue:      true,
+		RequeueAfter: time.Second * 5,
+	}
 
-func getInstance() *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "networking.istio.io",
-		Kind:    "ServiceEntry",
-		Version: "v1alpha3",
-	})
-	return u
-}
+	member void
+)
 
 // +kubebuilder:rbac:groups=com.example.example.com,resources=serviceentries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=com.example.example.com,resources=serviceentries/status,verbs=get;update;patch
@@ -75,7 +72,7 @@ func getInstance() *unstructured.Unstructured {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.7.0/pkg/reconcile
 func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger = r.Log.WithValues("serviceentry", req.NamespacedName)
+	logger = r.Log.WithValues("ServiceEntry", req.NamespacedName)
 
 	se := &networking.ServiceEntry{}
 
@@ -86,30 +83,38 @@ func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// Request object not found, could have been deleted after reconcile request.
 			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
 			// Return and don't requeue
-			return reconcile.Result{}, nil
+			logger.Info("ServiceEntry Not Found, could have been deleted after reconcile request.")
+			return reconcile.Result{Requeue: false}, nil
 		}
 		// Error reading the object - requeue the request.
-		return reconcile.Result{}, err
+		logger.Error(err, "Error reading the object - requeue the request.")
+		return requeue, err
 	}
 
-	a := se.Spec.Addresses
+	// Not configured to track, don't requeue it
+	if se.GetAnnotations()[updateAnnotation] != "true" {
+		return reconcile.Result{Requeue: false}, nil
+	}
 
-	b := lookupIps(se.Spec.Hosts)
+	newIps := lookupIps(se.Spec.Hosts)
 
-	if !Equal(a, b) {
-		se.Spec.Addresses = b
+	if !Equal(se.Spec.Addresses, newIps) {
+		se.Spec.Addresses = newIps
 		err = r.Update(context.TODO(), se)
-		logger.Info("This is the updated ServiceEntry Addresses", "se.Spec.Addresses", se.Spec.Addresses)
+		if err != nil {
+			logger.Error(err, "Failed to update ServiceEntry")
+		} else {
+			logger.Info("Updated ServiceEntry", "se.Spec.Addresses", se.Spec.Addresses)
+		}
 	}
 
-	return reconcile.Result{
-		RequeueAfter: time.Second * 30,
-	}, nil
+	return requeue, nil
 
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ServiceEntryReconciler) SetupWithManager(mgr ctrl.Manager) error {
+
 	return ctrl.NewControllerManagedBy(mgr).
 		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
 		//For(getInstance()).
@@ -130,7 +135,10 @@ func lookupIps(hosts []string) []string {
 				logger.Error(err, "Unknown Host", "host", host)
 			} else {
 				for _, ip := range addr {
-					addresses = append(addresses, ip.String())
+					if isIpv4Net(ip.String()) {
+						addresses = append(addresses, ip.String())
+					}
+
 				}
 
 			}
@@ -138,10 +146,6 @@ func lookupIps(hosts []string) []string {
 	}
 	return addresses
 }
-
-type void struct{}
-
-var member void
 
 func Equal(a, b []string) bool {
 
@@ -157,7 +161,6 @@ func Equal(a, b []string) bool {
 	for _, v := range b {
 		_, exists := set[v]
 		if !exists {
-			logger.Info("Changed IP!", "ip", v, "original", a, "new", b)
 			return false
 		}
 	}
