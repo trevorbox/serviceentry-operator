@@ -47,9 +47,9 @@ var (
 	member     void
 )
 
-// +kubebuilder:rbac:groups=com.example.example.com,resources=serviceentries,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=com.example.example.com,resources=serviceentries/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=com.example.example.com,resources=serviceentries/finalizers,verbs=update
+// +kubebuilder:rbac:groups=networking.istio.io,resources=serviceentries,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=networking.istio.io,resources=serviceentries/status,verbs=get
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
