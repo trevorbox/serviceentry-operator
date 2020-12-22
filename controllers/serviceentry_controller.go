@@ -18,23 +18,17 @@ package controllers
 
 import (
 	"context"
-
 	"net"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
-
-	errs "k8s.io/apimachinery/pkg/api/errors"
+	networking "istio.io/client-go/pkg/apis/networking/v1alpha3"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	//corev1 "k8s.io/api/core/v1"
-	//networking "istio.io/api/networking/v1alpha3"
-	networking "istio.io/client-go/pkg/apis/networking/v1alpha3"
 )
 
 // ServiceEntryReconciler reconciles a ServiceEntry object
@@ -49,13 +43,8 @@ const updateAnnotation = "updateme"
 
 var (
 	ipRegex, _ = regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
-	logger     logr.Logger
-	requeue    = reconcile.Result{
-		Requeue:      true,
-		RequeueAfter: time.Second * 5,
-	}
-
-	member void
+	log        logr.Logger
+	member     void
 )
 
 // +kubebuilder:rbac:groups=com.example.example.com,resources=serviceentries,verbs=get;list;watch;create;update;patch;delete
@@ -72,43 +61,47 @@ var (
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.7.0/pkg/reconcile
 func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger = r.Log.WithValues("ServiceEntry", req.NamespacedName)
+	log = r.Log.WithValues("ServiceEntry", req.NamespacedName)
+
+	log.Info("Reconcile...")
 
 	se := &networking.ServiceEntry{}
 
-	err := r.Get(context.TODO(), req.NamespacedName, se)
+	err := r.Get(ctx, req.NamespacedName, se)
 
 	if err != nil {
-		if errs.IsNotFound(err) {
+		if errors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
 			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
 			// Return and don't requeue
-			logger.Info("ServiceEntry Not Found, could have been deleted after reconcile request.")
-			return reconcile.Result{Requeue: false}, nil
+			log.Info("ServiceEntry resource not found. Ignoring since object must be deleted")
+			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
-		logger.Error(err, "Error reading the object - requeue the request.")
-		return requeue, err
+		log.Error(err, "Failed to get ServiceEntry")
+		return ctrl.Result{}, err
 	}
 
 	// Not configured to track, don't requeue it
 	if se.GetAnnotations()[updateAnnotation] != "true" {
-		return reconcile.Result{Requeue: false}, nil
+		return ctrl.Result{}, nil
 	}
 
 	newIps := lookupIps(se.Spec.Hosts)
 
-	if !Equal(se.Spec.Addresses, newIps) {
+	if !arrEqual(se.Spec.Addresses, newIps) {
 		se.Spec.Addresses = newIps
-		err = r.Update(context.TODO(), se)
+		err = r.Update(ctx, se)
 		if err != nil {
-			logger.Error(err, "Failed to update ServiceEntry")
+			log.Error(err, "Failed to update ServiceEntry")
 		} else {
-			logger.Info("Updated ServiceEntry", "se.Spec.Addresses", se.Spec.Addresses)
+			log.Info("Updated ServiceEntry", "se.Spec.Addresses", se.Spec.Addresses)
 		}
 	}
 
-	return requeue, nil
+	return ctrl.Result{
+		RequeueAfter: time.Second * 5,
+	}, nil
 
 }
 
@@ -132,7 +125,7 @@ func lookupIps(hosts []string) []string {
 		if !strings.HasPrefix(host, "*") {
 			addr, err := net.LookupIP(host)
 			if err != nil {
-				logger.Error(err, "Unknown Host", "host", host)
+				log.Error(err, "Unknown Host", "host", host)
 			} else {
 				for _, ip := range addr {
 					if isIpv4Net(ip.String()) {
@@ -147,7 +140,8 @@ func lookupIps(hosts []string) []string {
 	return addresses
 }
 
-func Equal(a, b []string) bool {
+// use a set to determine if arrays have the same values
+func arrEqual(a, b []string) bool {
 
 	if len(a) != len(b) {
 		return false
