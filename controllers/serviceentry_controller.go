@@ -29,6 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // ServiceEntryReconciler reconciles a ServiceEntry object
@@ -37,15 +39,22 @@ type ServiceEntryReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 }
+
 type void struct{}
 
-const updateAnnotation = "updateme"
+const managedAnnotation = "serviceentry-operator.redhat-cop.io/managed"
+const pollingFrequencyAnnotation = "serviceentry-operator.redhat-cop.io/polling-frequency"
 
 var (
 	ipRegex, _ = regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
 	log        logr.Logger
 	member     void
 )
+
+type instanceServiceEntry struct {
+	instance *networking.ServiceEntry
+	log      logr.Logger
+}
 
 // +kubebuilder:rbac:groups=networking.istio.io,resources=serviceentries,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=networking.istio.io,resources=serviceentries/status,verbs=get
@@ -81,14 +90,14 @@ func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Not configured to track, don't requeue it
-	if se.GetAnnotations()[updateAnnotation] != "true" {
+	//If annotation was removed, stop the requeueing
+	if !isManaged(se.GetAnnotations()) {
 		return ctrl.Result{}, nil
 	}
 
 	newIps := lookupIps(se.Spec.Hosts)
 
-	if !arrEqual(se.Spec.Addresses, newIps) {
+	if !unorderedEquals(se.Spec.Addresses, newIps) {
 		se.Spec.Addresses = newIps
 		err = r.Update(ctx, se)
 		if err != nil {
@@ -104,13 +113,36 @@ func (r *ServiceEntryReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 }
 
+func isManaged(annotations map[string]string) bool {
+	value, _ := annotations[managedAnnotation]
+	return value == "true"
+}
+
+func isManagedServiceEntryAnnotationPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return isManaged(e.ObjectNew.GetAnnotations())
+		},
+		CreateFunc: func(e event.CreateEvent) bool {
+			return isManaged(e.Object.GetAnnotations())
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return false
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return false
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ServiceEntryReconciler) SetupWithManager(mgr ctrl.Manager) error {
-
 	return ctrl.NewControllerManagedBy(mgr).
 		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
 		//For(getInstance()).
 		For(&networking.ServiceEntry{}).
+		//		Owns(&networking.ServiceEntry{}).
+		WithEventFilter(isManagedServiceEntryAnnotationPredicate()).
 		Complete(r)
 }
 
@@ -139,8 +171,8 @@ func lookupIps(hosts []string) []string {
 	return addresses
 }
 
-// use a set to determine if arrays have the same values
-func arrEqual(a, b []string) bool {
+// use a set to determine if arrays have the same values, in any order
+func unorderedEquals(a, b []string) bool {
 
 	if len(a) != len(b) {
 		return false
